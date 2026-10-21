@@ -62,7 +62,8 @@ python github_hours.py --week MM/DD/YYYY [--username <github-username>] [--org <
 # Hours for a specific day in the default org
 python github_hours.py --username alexbegg --date 07/26/2026
 
-# Sunday–Saturday summary for the week containing this date (prints each day as it finishes)
+# Sunday–Saturday summary for the week containing this date (prints each day as it
+# finishes; stops after today in PT so future days are skipped)
 python github_hours.py --week 10/20/2026
 
 # Different org

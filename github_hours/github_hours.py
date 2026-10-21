@@ -416,6 +416,7 @@ def print_day_detail(day, result, org):
 
 def print_week_summary(token, username, org, any_day):
     sunday, saturday = week_bounds_sunday(any_day)
+    today_pt = datetime.now(PT).date()
     print(f"Week (PT): {sunday.strftime('%m/%d/%Y')} – {saturday.strftime('%m/%d/%Y')}")
     print(f"Org: {org}")
     print(f"User: {username}\n", flush=True)
@@ -423,6 +424,8 @@ def print_week_summary(token, username, org, any_day):
     total = 0.0
     for offset in range(7):
         day = sunday + timedelta(days=offset)
+        if day > today_pt:
+            break
         commit_points = fetch_commit_items(token, username, org, day)
         result = compute_hours(day, commit_points)
         total += result["hours"]
@@ -436,6 +439,8 @@ def print_week_summary(token, username, org, any_day):
             f"overtime: {result['overtime_hours']:.2f})",
             flush=True,
         )
+        if day == today_pt:
+            break
 
     print(f"\nTotal: {total:.2f}h", flush=True)
 
