@@ -16,7 +16,7 @@ import requests
 
 GITHUB_API = "https://api.github.com"
 PT = ZoneInfo("America/Los_Angeles")
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 CACHE_TTL = timedelta(hours=24)
 COMMIT_FETCH_WORKERS = 8
 
@@ -286,14 +286,29 @@ def fetch_pr_commits(client: GitHubClient, full_name: str, number: int):
     )
 
 
+def commit_subject(message):
+    if not message:
+        return ""
+    return message.splitlines()[0].strip()
+
+
 def commit_to_point(commit: dict, full_name: str, start_pt, end_pt):
     ts_utc = datetime.fromisoformat(
         commit["commit"]["committer"]["date"].replace("Z", "+00:00")
     )
     ts_pt = ts_utc.astimezone(PT)
     if start_pt <= ts_pt < end_pt:
-        return commit["sha"], (ts_pt, full_name)
+        sha = commit["sha"]
+        subject = commit_subject((commit.get("commit") or {}).get("message", ""))
+        return sha, (ts_pt, full_name, sha, subject)
     return None, None
+
+
+def commit_fields(point):
+    ts, repo = point[0], point[1]
+    sha = point[2] if len(point) > 2 else ""
+    subject = point[3] if len(point) > 3 else ""
+    return ts, repo, sha, subject
 
 
 def _branch_commit_points(client, full_name, username, branch, start_utc, end_utc, start_pt, end_pt):
@@ -413,9 +428,11 @@ def read_commit_cache(path, now, ttl):
         points = []
         for item in data["commits"]:
             repo = item["repo"]
-            if not isinstance(repo, str):
+            sha = item.get("sha", "")
+            subject = item.get("message", "")
+            if not isinstance(repo, str) or not isinstance(sha, str) or not isinstance(subject, str):
                 return None
-            points.append((datetime.fromisoformat(item["committed_at"]), repo))
+            points.append((datetime.fromisoformat(item["committed_at"]), repo, sha, subject))
         return points
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
         return None
@@ -428,8 +445,13 @@ def write_commit_cache(path, points, cached_at):
         "version": CACHE_VERSION,
         "cached_at": cached_at.isoformat(),
         "commits": [
-            {"committed_at": ts.isoformat(), "repo": repo}
-            for ts, repo in points
+            {
+                "committed_at": ts.isoformat(),
+                "repo": repo,
+                "sha": sha,
+                "message": subject,
+            }
+            for ts, repo, sha, subject in (commit_fields(point) for point in points)
         ],
     }
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -527,8 +549,8 @@ def compute_hours(day_pt, commit_points):
             },
         }
 
-    times = [t for t, _ in commit_points]
-    repos = sorted({r for _, r in commit_points})
+    times = [point[0] for point in commit_points]
+    repos = sorted({point[1] for point in commit_points})
 
     first_commit = min(times)
     last_commit = max(times)
@@ -655,10 +677,12 @@ def _self_test_cache():
     with tempfile.TemporaryDirectory() as directory:
         directory = Path(directory)
         path = commit_cache_path(directory, "alexbegg", "captiv8io", past)
-        assert path.name == "v1-alexbegg-captiv8io-2026-10-19.json"
+        assert path.name == "v2-alexbegg-captiv8io-2026-10-19.json"
         now = datetime(2026, 10, 26, 20, 0, tzinfo=timezone.utc)
-        original = [(datetime(2026, 10, 19, 9, 0, tzinfo=PT), "captiv8io/a")]
-        updated = [(datetime(2026, 10, 19, 10, 0, tzinfo=PT), "captiv8io/b")]
+        original = [(datetime(2026, 10, 19, 9, 0, tzinfo=PT), "captiv8io/a", "aaa1111", "Morning fix")]
+        updated = [(datetime(2026, 10, 19, 10, 0, tzinfo=PT), "captiv8io/b", "bbb2222", "Follow-up")]
+        listed = format_commit_lines(original)
+        assert listed == ["  10/19/2026 9:00 AM PT  captiv8io/a  aaa1111  Morning fix"]
         calls = {"n": 0}
 
         def fetch_original():
@@ -706,7 +730,29 @@ def _self_test_cache():
 DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
-def print_day_detail(day, result, org):
+def format_commit_lines(commit_points):
+    lines = []
+    for point in commit_points:
+        ts, repo, sha, subject = commit_fields(point)
+        parts = [fmt_datetime_pt(ts), repo]
+        if sha:
+            parts.append(sha[:7])
+        if subject:
+            parts.append(subject)
+        lines.append("  " + "  ".join(parts))
+    return lines
+
+
+def print_commit_list(commit_points):
+    print("Commits:")
+    if not commit_points:
+        print("  (none)")
+        return
+    for line in format_commit_lines(commit_points):
+        print(line)
+
+
+def print_day_detail(day, result, org, commit_points=None):
     print(f"Date (PT): {day.strftime('%m/%d/%Y')}")
     print(f"Org: {org}")
     print(f"Commits found: {result['commit_count']}")
@@ -718,9 +764,12 @@ def print_day_detail(day, result, org):
     print(f"Baseline start PT: {fmt_datetime_pt(result['effective_start_pt'])}")
     print(f"Baseline end PT: {fmt_datetime_pt(result['effective_end_pt'])}")
     print(f"Repos touched: {', '.join(result['repos']) if result['repos'] else '(none)'}")
+    if commit_points is not None:
+        print()
+        print_commit_list(commit_points)
 
 
-def print_week_summary(token, username, org, any_day, *, cache_mode="normal", timing=None):
+def print_week_summary(token, username, org, any_day, *, cache_mode="normal", timing=None, list_commits=False):
     sunday, saturday = week_bounds_sunday(any_day)
     today_pt = datetime.now(PT).date()
     print(f"Week (PT): {sunday.strftime('%m/%d/%Y')} – {saturday.strftime('%m/%d/%Y')}")
@@ -752,6 +801,9 @@ def print_week_summary(token, username, org, any_day, *, cache_mode="normal", ti
             f"overtime: {result['overtime_hours']:.2f})",
             flush=True,
         )
+        if list_commits:
+            for line in format_commit_lines(commit_points) or ["  (none)"]:
+                print(line, flush=True)
         if day == today_pt:
             break
 
@@ -784,6 +836,11 @@ def main():
         action="store_true",
         help="Do not read or write the day cache",
     )
+    p.add_argument(
+        "--commits",
+        action="store_true",
+        help="List the commits counted for the day",
+    )
     args = p.parse_args()
 
     if args.self_test:
@@ -810,7 +867,7 @@ def main():
     if args.week:
         print_week_summary(
             token, args.username, args.org, parse_mmddyyyy(args.week),
-            cache_mode=cache_mode, timing=timing,
+            cache_mode=cache_mode, timing=timing, list_commits=args.commits,
         )
     else:
         day = parse_mmddyyyy(args.date)
@@ -823,7 +880,12 @@ def main():
             timing=timing,
         )
         result = compute_hours(day, commit_points)
-        print_day_detail(day, result, args.org)
+        print_day_detail(
+            day,
+            result,
+            args.org,
+            commit_points if args.commits else None,
+        )
 
     if timing is not None:
         print(timing.render(), flush=True)

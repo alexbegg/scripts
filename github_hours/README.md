@@ -56,6 +56,7 @@ python github_hours.py --week MM/DD/YYYY [--username <github-username>] [--org <
 | `--debug-timing` | No | — | Print GitHub call counts, phase timings, and the slowest endpoints |
 | `--refresh` | No | — | Ignore cached days and replace them |
 | `--no-cache` | No | — | Do not read or write the day cache |
+| `--commits` | No | — | List each commit counted for the day (time, repo, short SHA, subject) |
 
 \* Provide exactly one of `--date` or `--week` for a normal run (not for `--self-test`).
 
@@ -80,6 +81,9 @@ python github_hours.py --date 10/19/2026 --debug-timing
 
 # Replace a cached day
 python github_hours.py --date 10/19/2026 --refresh
+
+# List the commits counted for that day
+python github_hours.py --date 10/19/2026 --commits
 ```
 
 ### Sample output
