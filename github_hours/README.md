@@ -2,7 +2,7 @@
 
 Detect working hours for a given day by checking GitHub commits in an organization, including activity that falls outside standard working hours.
 
-The script finds commits authored by a GitHub user in a given org on a specific Pacific Time (PT) day, including commits on non-default branches and in open (unmerged) PRs. GitHub's commit search API only indexes the default branch, so the script also discovers candidate repos from your recent push events and PRs, then lists your commits across every branch in those repos. It compares those commit times against a baseline work window and expands the day when commits happen earlier or later than usual.
+The script finds commits authored by a GitHub user in a given org on a specific Pacific Time (PT) day, including commits on non-default branches and in open (unmerged) PRs. GitHub's commit search API only indexes the default branch, so the script also discovers candidate repos from your recent push events and PRs, then lists your commits across every branch in those repos. Branch and PR commit requests run concurrently. It compares those commit times against a baseline work window and expands the day when commits happen earlier or later than usual.
 
 ## How hours are calculated
 
@@ -53,6 +53,9 @@ python github_hours.py --week MM/DD/YYYY [--username <github-username>] [--org <
 | `--username` | No | `alexbegg` | GitHub username whose commits to search |
 | `--org` | No | `captiv8io` | GitHub organization to search |
 | `--self-test` | No | — | Run built-in calculation checks and exit |
+| `--debug-timing` | No | — | Print GitHub call counts, phase timings, and the slowest endpoints |
+| `--refresh` | No | — | Ignore cached days and replace them |
+| `--no-cache` | No | — | Do not read or write the day cache |
 
 \* Provide exactly one of `--date` or `--week` for a normal run (not for `--self-test`).
 
@@ -71,6 +74,12 @@ python github_hours.py --username alexbegg --date 07/26/2026 --org my-org
 
 # Verify hour math
 python github_hours.py --self-test
+
+# Show which GitHub calls dominated the scan
+python github_hours.py --date 10/19/2026 --debug-timing
+
+# Replace a cached day
+python github_hours.py --date 10/19/2026 --refresh
 ```
 
 ### Sample output
@@ -88,3 +97,9 @@ Effective start PT: 07/26/2026 7:30 AM PT
 Effective end PT: 07/26/2026 7:15 PM PT
 Repos touched: org/repo-a, org/repo-b
 ```
+
+## Performance
+
+Scanning every branch is what makes a day slow. A serial scan of 10/19/2026 took about 59 seconds and 200 GitHub calls; 171 of those calls (50 seconds) were commit queries for `captiv8-data`. Those branch and PR queries now run eight at a time.
+
+Finished days are stored as JSON for 24 hours in the OS cache directory (`~/Library/Caches/github_hours` on macOS, `%LOCALAPPDATA%\github_hours` on Windows, and `$XDG_CACHE_HOME/github_hours` or `~/.cache/github_hours` on other systems). A repeat scan of a past day returns that file and does not call GitHub. The current PT day is always fetched again, because it can still gain commits. `--week` follows the same rule for each day. Use `--refresh` when a past day may have changed, or `--no-cache` for a fully live scan. `--debug-timing` prints the phase breakdown after the result.
